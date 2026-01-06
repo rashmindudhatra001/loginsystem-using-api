@@ -15,8 +15,7 @@ class RecoveryOTP(models.Model):
 
     def is_expired(self):
         return timezone.now() > self.expires_at
-
-
+#model.py for custom user model with soft delete functionality
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, username, email, password=None, **extra_fields):
