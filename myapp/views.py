@@ -17,171 +17,197 @@ from .serializers import *
 User = get_user_model()
 
 
-class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    permission_classes = (AllowAny,)
-    serializer_class = RegisterSerializer
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                api_response(
-                    status_code=400,
-                    message="Registration failed",
-                    error=serializer.errors
-                ),
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        user = serializer.save()
-        warnings = []
-        optional_fields = ["gender", "first_name", "last_name", "phone_number", "address", "city", "age"]
-        for field in optional_fields:
-            if hasattr(user, field) and not getattr(user, field):
-                warnings.append(f"{field.replace('_', ' ').capitalize()} is not added. Please update your profile.")
-
-        return Response(
-            api_response(
-                status_code=201,
-                message="User registered successfully",
-                userid=str(user.id),  # return UUID
-                error=warnings
-            ),
-            status=status.HTTP_201_CREATED
-        )
 
 
-
-
-
-class LoginView(generics.GenericAPIView):
-    serializer_class = LoginSerializer
-    permission_classes = (AllowAny,)
-
-    def post(self, request):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        username = serializer.validated_data["username"]
-
-        if SoftDeletedUser.objects.filter(username=username).exists():
-            return Response(
-                api_response(
-                    status_code=403,
-                    message="Account deleted",
-                    error=["Your account has been deleted and cannot be accessed"]
-                ),
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        user = authenticate(**serializer.validated_data)
-        if not user:
-            return Response(
-                api_response(
-                    status_code=401,
-                    message="Invalid credentials",
-                    error=["Username or password is incorrect"]
-                ),
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-
-        user_uuid = str(user.id)
-
-        access_token = jwt.encode(
-            {"user_id": user_uuid, "exp": datetime.utcnow() + timedelta(days=1)},
-            settings.SECRET_KEY,
-            algorithm="HS256"
-        )
-
-        refresh_token = jwt.encode(
-            {"user_id": user_uuid, "exp": datetime.utcnow() + timedelta(days=30)},
-            settings.SECRET_KEY,
-            algorithm="HS256"
-        )
-
-        response_data = api_response(
-            status_code=200,
-            message=f"Login successful. Welcome {user.username}",
-            data=UserSerializer(user).data,
-            userid=user_uuid
-        )
-        response_data["access_token"] = access_token
-        response_data["refresh_token"] = refresh_token
-
-        response = Response(response_data, status=status.HTTP_200_OK)
-        response.set_cookie(
-            "access_token",
-            access_token,
-            httponly=True,
-            max_age=86400,
-            samesite='Lax'
-        )
-        response.set_cookie(
-            "refresh_token",
-            refresh_token,
-            httponly=True,
-            max_age=2592000,
-            samesite='Lax'
-        )
-
-        return response
-
-
-
-
-class ProfileView(APIView):
-    permission_classes = (AllowAny,)
-
-    def get(self, request):
-        user_uuid = get_uuid_from_cookie(request)
-        user = User.objects.get(id=user_uuid)
-
-        return Response(
-            api_response(
-                status_code=200,
-                message="Profile fetched successfully",
-                data=UserSerializer(user).data,
-                userid=user_uuid
-            )
-        )
-
+User = get_user_model()
 
 BLOCKED_FIELDS = {"email", "username", "password"}
 
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = []
 
-# class ProfileUpdateView(APIView):
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        warnings = [f"{f} not added." for f in ['gender','first_name','last_name','phone_number','address','city','age'] if not getattr(user, f)]
+        return Response(api_response(201, "User registered successfully", userid=str(user.id), error=warnings))
+
+class LoginView(APIView):
+    permission_classes = []
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        username = serializer.validated_data["username"]
+
+        if SoftDeletedUser.objects.filter(username=username).exists():
+            return Response(api_response(403, "Account deleted", error=["Cannot access deleted account"]), status=403)
+
+        user = authenticate(**serializer.validated_data)
+        if not user:
+            return Response(api_response(401, "Invalid credentials", error=["Username or password incorrect"]), status=401)
+
+        access_token = generate_jwt(user.id, days_valid=1)
+        refresh_token = generate_jwt(user.id, days_valid=30)
+
+        response = Response(api_response(200, f"Login successful. Welcome {user.username}", data=UserSerializer(user).data, userid=str(user.id)))
+        response.set_cookie("access_token", access_token, httponly=True, max_age=86400, samesite='Lax')
+        response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=2592000, samesite='Lax')
+        response.data.update({"access_token": access_token, "refresh_token": refresh_token})
+        return response
+
+class ProfileView(APIView):
+    def get(self, request):
+        user = get_user_from_cookie(request)
+        return Response(api_response(200, "Profile fetched successfully", data=UserSerializer(user).data, userid=str(user.id)))
+
+class ProfileUpdateView(APIView):
+    def put(self, request):
+        user = get_user_from_cookie(request)
+        blocked = BLOCKED_FIELDS & request.data.keys()
+        if blocked:
+            return Response(api_response(400, "Restricted fields cannot be updated", error=list(blocked)), status=400)
+        serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(api_response(200, "Profile updated successfully", data=UserSerializer(user).data, userid=str(user.id)))
+
+# class RegisterView(generics.CreateAPIView):
+#     queryset = User.objects.all()
 #     permission_classes = (AllowAny,)
+#     serializer_class = RegisterSerializer
 
-#     def patch(self, request):
-#         user_uuid = get_user_from_token(request)
-#         if isinstance(user_uuid, Response):
-#             return user_uuid
-
-#         user = User.objects.get(id=user_uuid)
-#         blocked = BLOCKED_FIELDS & request.data.keys()
-#         if blocked:
+#     def create(self, request, *args, **kwargs):
+#         serializer = self.get_serializer(data=request.data)
+#         if not serializer.is_valid():
 #             return Response(
 #                 api_response(
 #                     status_code=400,
-#                     message="Restricted fields cannot be updated",
-#                     error=list(blocked)
+#                     message="Registration failed",
+#                     error=serializer.errors
 #                 ),
-#                 status=400
+#                 status=status.HTTP_400_BAD_REQUEST
 #             )
 
-#         serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
+#         user = serializer.save()
+#         warnings = []
+#         optional_fields = ["gender", "first_name", "last_name", "phone_number", "address", "city", "age"]
+#         for field in optional_fields:
+#             if hasattr(user, field) and not getattr(user, field):
+#                 warnings.append(f"{field.replace('_', ' ').capitalize()} is not added. Please update your profile.")
+
+#         return Response(
+#             api_response(
+#                 status_code=201,
+#                 message="User registered successfully",
+#                 userid=str(user.id),  # return UUID
+#                 error=warnings
+#             ),
+#             status=status.HTTP_201_CREATED
+#         )
+
+
+
+
+
+# class LoginView(generics.GenericAPIView):
+#     serializer_class = LoginSerializer
+#     permission_classes = (AllowAny,)
+
+#     def post(self, request):
+#         serializer = self.get_serializer(data=request.data)
 #         serializer.is_valid(raise_exception=True)
-#         serializer.save()
+
+#         username = serializer.validated_data["username"]
+
+#         if SoftDeletedUser.objects.filter(username=username).exists():
+#             return Response(
+#                 api_response(
+#                     status_code=403,
+#                     message="Account deleted",
+#                     error=["Your account has been deleted and cannot be accessed"]
+#                 ),
+#                 status=status.HTTP_403_FORBIDDEN
+#             )
+
+#         user = authenticate(**serializer.validated_data)
+#         if not user:
+#             return Response(
+#                 api_response(
+#                     status_code=401,
+#                     message="Invalid credentials",
+#                     error=["Username or password is incorrect"]
+#                 ),
+#                 status=status.HTTP_401_UNAUTHORIZED
+#             )
+
+#         user_uuid = str(user.id)
+
+#         access_token = jwt.encode(
+#             {"user_id": user_uuid, "exp": datetime.utcnow() + timedelta(days=1)},
+#             settings.SECRET_KEY,
+#             algorithm="HS256"
+#         )
+
+#         refresh_token = jwt.encode(
+#             {"user_id": user_uuid, "exp": datetime.utcnow() + timedelta(days=30)},
+#             settings.SECRET_KEY,
+#             algorithm="HS256"
+#         )
+
+#         response_data = api_response(
+#             status_code=200,
+#             message=f"Login successful. Welcome {user.username}",
+#             data=UserSerializer(user).data,
+#             userid=user_uuid
+#         )
+#         response_data["access_token"] = access_token
+#         response_data["refresh_token"] = refresh_token
+
+#         response = Response(response_data, status=status.HTTP_200_OK)
+#         response.set_cookie(
+#             "access_token",
+#             access_token,
+#             httponly=True,
+#             max_age=86400,
+#             samesite='Lax'
+#         )
+#         response.set_cookie(
+#             "refresh_token",
+#             refresh_token,
+#             httponly=True,
+#             max_age=2592000,
+#             samesite='Lax'
+#         )
+
+#         return response
+
+
+
+
+# class ProfileView(APIView):
+#     permission_classes = (AllowAny,)
+
+#     def get(self, request):
+#         user_uuid = get_uuid_from_cookie(request)
+#         user = User.objects.get(id=user_uuid)
 
 #         return Response(
 #             api_response(
 #                 status_code=200,
-#                 message="Profile updated successfully",
+#                 message="Profile fetched successfully",
 #                 data=UserSerializer(user).data,
-#                 userid=str(user.id)
+#                 userid=user_uuid
 #             )
 #         )
+
+
+# BLOCKED_FIELDS = {"email", "username", "password"}
+
+
 
 
 class ProfileUpdateView(APIView):

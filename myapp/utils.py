@@ -1,3 +1,4 @@
+import datetime
 from random import random
 import jwt
 import uuid
@@ -6,10 +7,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.exceptions import AuthenticationFailed
-from datetime import timedelta
 from django.utils import timezone
-from .models import SoftDeletedUser
-from .models import RecoveryOTP
+from .models import *
 import secrets
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,7 +17,62 @@ import smtplib
 from django.core.mail import send_mail
 
 
+
 User = get_user_model()# Utility Functions
+
+
+
+
+
+from datetime import datetime, timedelta
+
+from datetime import datetime, timedelta
+import jwt
+from django.conf import settings
+
+def generate_jwt(user_id, days_valid=1):
+    """
+    Generate a JWT token for a given user ID.
+    """
+    payload = {
+        "user_id": str(user_id),
+        "exp": datetime.utcnow() + timedelta(days=days_valid)
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+    
+    # PyJWT >= 2 returns str, <2 returns bytes, so decode if necessary
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+    
+    return token
+
+
+def get_user_from_cookie(request):
+    token = request.COOKIES.get("access_token")
+    if not token:
+        raise AuthenticationFailed("Authentication required.")
+
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise AuthenticationFailed("Invalid token payload.")
+        uuid.UUID(str(user_id))
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            raise AuthenticationFailed("User not found.")
+        if not user.is_active:
+            raise AuthenticationFailed("Account disabled.")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise AuthenticationFailed("Token expired.")
+    except jwt.InvalidTokenError:
+        raise AuthenticationFailed("Invalid token.")
+
+
+
+
+
 
 
 def get_otp_from_cookie(request):# Retrieve OTP and email from signed cookies
@@ -180,7 +234,7 @@ def get_user_from_token(request):
 
 def cleanup_expired_soft_deleted_users():
 
-    expiry_time = timezone.now() - timedelta(days=30)
+    expiry_time = timezone.now() - datetime.timedelta(days=30)
     SoftDeletedUser.objects.filter(deleted_at__lt=expiry_time).delete()
 
 
@@ -191,7 +245,7 @@ def generate_recovery_otp(email, expiry_minutes=2):
     RecoveryOTP.objects.filter(email=email).delete()
 
     otp = str(secrets.randbelow(9000) + 1000)
-    expires_at = timezone.now() + timedelta(minutes=expiry_minutes)
+    expires_at = timezone.now() + datetime.timedelta(minutes=expiry_minutes)
 
     RecoveryOTP.objects.create(
         email=email,
@@ -317,3 +371,7 @@ def send_otp_cookie(email, response, expiry_seconds=150):
     )
 
     return True
+
+
+
+
