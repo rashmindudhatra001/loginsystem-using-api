@@ -21,9 +21,6 @@ from django.core.mail import send_mail
 User = get_user_model()# Utility Functions
 
 
-
-
-
 from datetime import datetime, timedelta
 
 from datetime import datetime, timedelta
@@ -40,7 +37,6 @@ def generate_jwt(user_id, days_valid=1):
     }
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
     
-    # PyJWT >= 2 returns str, <2 returns bytes, so decode if necessary
     if isinstance(token, bytes):
         token = token.decode("utf-8")
     

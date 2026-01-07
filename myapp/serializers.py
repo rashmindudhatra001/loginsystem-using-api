@@ -151,10 +151,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'first_name', 'last_name',
                   'email', 'phone_number', 'address', 'city', 'gender', 'age']
-
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
+
+    # Make required fields required
+    phone_number = serializers.CharField(required=True)
+    gender = serializers.CharField(required=True)
 
     class Meta:
         model = User
@@ -165,6 +168,8 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         username = attrs.get("username")
         email = attrs.get("email")
+        phone_number = attrs.get("phone_number")
+        gender = attrs.get("gender")
 
         # Soft-deleted check
         if SoftDeletedUser.objects.filter(username=username).exists() or SoftDeletedUser.objects.filter(email=email).exists():
@@ -176,6 +181,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         if User.objects.filter(email=email).exists():
             errors["email"] = "This email is already registered."
 
+        if not phone_number:
+            errors["phone_number"] = "Phone number is required."
+        if not gender:
+            errors["gender"] = "Gender is required."
+
         if errors:
             raise serializers.ValidationError(errors)
 
@@ -185,8 +195,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop("confirm_password")
-        return User.objects.create_user(**validated_data)
+        # Remove confirm_password before creating the user
+        validated_data.pop('confirm_password', None)
+
+        # Create user using custom manager
+        user = User.objects.create_user(**validated_data)
+        return user
+
+
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(required=True)

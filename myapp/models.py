@@ -129,17 +129,20 @@ class CustomUserManager(BaseUserManager):
 class CustomUser(AbstractBaseUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    GENDER_CHOICES = [('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')]
-
     username = models.CharField(max_length=30, unique=True)
     email = models.EmailField(unique=True)
+
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
-    phone_number = models.CharField(max_length=15, blank=True)  # Increased max_length
+    phone_number = models.CharField(max_length=15, blank=True)
     address = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=50, blank=True)
-    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
+    gender = models.CharField(max_length=10, blank=True, null=True)
     age = models.PositiveIntegerField(blank=True, null=True)
+
+    # 🔑 OAuth flags
+    is_oauth = models.BooleanField(default=False)
+    oauth_provider = models.CharField(max_length=20, null=True, blank=True)
 
     is_active = models.BooleanField(default=True)
     is_admin = models.BooleanField(default=False)
@@ -148,13 +151,7 @@ class CustomUser(AbstractBaseUser):
 
     USERNAME_FIELD = "username"
     REQUIRED_FIELDS = ["email"]
-
-    def __str__(self):
-        return self.username
-
-    @property
-    def is_staff(self):
-        return self.is_admin
+    is_oauth = models.BooleanField(default=False)
 
 class SoftDeletedUser(models.Model):
     user_id = models.UUIDField()

@@ -36,28 +36,35 @@ class RegisterView(generics.CreateAPIView):
         return Response(api_response(201, "User registered successfully", userid=str(user.id), error=warnings))
 
 class LoginView(APIView):
-    permission_classes = []
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        username = serializer.validated_data["username"]
+        identifier = request.data.get("username")
+        password = request.data.get("password")
 
-        if SoftDeletedUser.objects.filter(username=username).exists():
-            return Response(api_response(403, "Account deleted", error=["Cannot access deleted account"]), status=403)
+        user = User.objects.filter(
+            Q(username=identifier) | Q(email=identifier)
+        ).first()
 
-        user = authenticate(**serializer.validated_data)
         if not user:
-            return Response(api_response(401, "Invalid credentials", error=["Username or password incorrect"]), status=401)
+            return Response(api_response(401, "Invalid credentials"))
 
-        access_token = generate_jwt(user.id, days_valid=1)
-        refresh_token = generate_jwt(user.id, days_valid=30)
+        if user.is_oauth:
+            return Response(api_response(
+                400, "Use Google login for this account"
+            ))
 
-        response = Response(api_response(200, f"Login successful. Welcome {user.username}", data=UserSerializer(user).data, userid=str(user.id)))
-        response.set_cookie("access_token", access_token, httponly=True, max_age=86400, samesite='Lax')
-        response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=2592000, samesite='Lax')
-        response.data.update({"access_token": access_token, "refresh_token": refresh_token})
+        if not user.check_password(password):
+            return Response(api_response(401, "Invalid credentials"))
+
+        access = generate_jwt(user.id, 1)
+        refresh = generate_jwt(user.id, 30)
+
+        response = Response(api_response(200, "Login success", userid=str(user.id)))
+        response.set_cookie("access_token", access, httponly=True)
+        response.set_cookie("refresh_token", refresh, httponly=True)
         return response
+
 
 class ProfileView(APIView):
     def get(self, request):
